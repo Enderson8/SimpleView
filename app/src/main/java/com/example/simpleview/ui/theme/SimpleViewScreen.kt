@@ -28,9 +28,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -59,6 +62,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.documentfile.provider.DocumentFile
 import coil.compose.AsyncImage
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -99,13 +103,26 @@ fun SimpleViewScreen() {
         }
     }
 
-    val launcher = rememberLauncherForActivityResult(
+    // Launcher for single image
+    val singleImageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            val images = fetchImagesInSameFolder(context, it)
-            allImages = images
-            currentIndex = images.indexOf(it)
+            allImages = listOf(it)
+            currentIndex = 0
+        }
+    }
+
+    // Launcher for folder
+    val folderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        uri?.let { treeUri ->
+            val images = listImagesInFolder(context, treeUri)
+            if (images.isNotEmpty()) {
+                allImages = images
+                currentIndex = 0
+            }
         }
     }
 
@@ -113,12 +130,11 @@ fun SimpleViewScreen() {
         BackHandler { isCropping = false }
         CropScreen(
             uri = currentUri,
-            onCropConfirmed = { 
+            onCropConfirmed = { newUri -> 
                 isCropping = false 
-                // Refresh images to see the new one if saved in the same folder
-                val images = fetchImagesInSameFolder(context, currentUri)
-                allImages = images
-                currentIndex = images.indexOf(currentUri)
+                // Se salvou na mesma lista, poderíamos atualizar, mas por simplicidade apenas mostramos a nova
+                allImages = listOf(newUri)
+                currentIndex = 0
             },
             onCancel = { isCropping = false }
         )
@@ -141,12 +157,32 @@ fun SimpleViewScreen() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Button(
-                onClick = {
-                    launcher.launch("image/*")
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                Text("Abrir imagem")
+                Button(
+                    onClick = { singleImageLauncher.launch("image/*") },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.Photo, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Imagem")
+                }
+                
+                Spacer(Modifier.width(16.dp))
+                
+                Button(
+                    onClick = { folderLauncher.launch(null) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary
+                    )
+                ) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Pasta")
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -188,7 +224,7 @@ fun SimpleViewScreen() {
                     IconButton(onClick = { showInfo = true }) {
                         Icon(
                             imageVector = Icons.Default.Info,
-                            contentDescription = "Informações da imagem",
+                            contentDescription = "Informações",
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -198,7 +234,7 @@ fun SimpleViewScreen() {
                     IconButton(onClick = { isCropping = true }) {
                         Icon(
                             imageVector = Icons.Default.Crop,
-                            contentDescription = "Cortar imagem",
+                            contentDescription = "Cortar",
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -211,7 +247,7 @@ fun SimpleViewScreen() {
                             putExtra(Intent.EXTRA_STREAM, currentUri)
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, "Compartilhar Imagem"))
+                        context.startActivity(Intent.createChooser(shareIntent, "Compartilhar"))
                     }) {
                         Icon(
                             imageVector = Icons.Default.Share,
@@ -248,7 +284,7 @@ fun SimpleViewScreen() {
             }
         } else {
             Text(
-                text = "Nenhuma imagem selecionada",
+                text = "Nenhuma imagem ou pasta selecionada",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -353,7 +389,7 @@ fun ImageViewer(
     ) {
         AsyncImage(
             model = uri,
-            contentDescription = "Imagem selecionada",
+            contentDescription = "Imagem",
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit
         )
@@ -367,7 +403,6 @@ fun getImageMetadata(context: Context, uri: Uri): ImageMetadata {
     
     val contentResolver = context.contentResolver
     
-    // 1. Query basic info from ContentResolver
     val projection = arrayOf(
         OpenableColumns.DISPLAY_NAME,
         OpenableColumns.SIZE,
@@ -384,15 +419,14 @@ fun getImageMetadata(context: Context, uri: Uri): ImageMetadata {
                 if (sizeIdx != -1) sizeBytes = cursor.getLong(sizeIdx)
                 
                 val dateIdx = cursor.getColumnIndex(MediaStore.Images.Media.DATE_MODIFIED)
-                if (dateIdx != -1) dateModified = cursor.getLong(dateIdx) * 1000 // MediaStore stores in seconds
+                if (dateIdx != -1) dateModified = cursor.getLong(dateIdx) * 1000
             }
         }
     } catch (_: Exception) {}
 
-    // 2. Get Resolution using BitmapFactory
     var resolution = "Desconhecida"
     try {
-        contentResolver.openInputStream(uri)?.use { inputStream ->
+        context.contentResolver.openInputStream(uri)?.use { inputStream ->
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
@@ -414,44 +448,24 @@ fun getImageMetadata(context: Context, uri: Uri): ImageMetadata {
     return ImageMetadata(name, extension, resolution, sizeStr, dateStr)
 }
 
-fun fetchImagesInSameFolder(context: Context, selectedUri: Uri): List<Uri> {
+fun listImagesInFolder(context: Context, treeUri: Uri): List<Uri> {
     val images = mutableListOf<Uri>()
-    val contentResolver = context.contentResolver
-
-    var bucketId: String? = null
-    val projection = arrayOf(MediaStore.Images.Media.BUCKET_ID)
+    val root = DocumentFile.fromTreeUri(context, treeUri) ?: return emptyList()
     
-    try {
-        contentResolver.query(selectedUri, projection, null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val bucketIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
-                bucketId = cursor.getString(bucketIdColumn)
-            }
-        }
-    } catch (_: Exception) {}
-
-    if (bucketId != null) {
-        val externalUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-        val selection = "${MediaStore.Images.Media.BUCKET_ID} = ?"
-        val selectionArgs = arrayOf(bucketId)
-        val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
-        val queryProjection = arrayOf(MediaStore.Images.Media._ID)
-
-        contentResolver.query(externalUri, queryProjection, selection, selectionArgs, sortOrder)?.use { cursor ->
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            while (cursor.moveToNext()) {
-                val id = cursor.getLong(idColumn)
-                val uri = Uri.withAppendedPath(externalUri, id.toString())
-                images.add(uri)
+    val supportedExtensions = listOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+    
+    root.listFiles().forEach { file ->
+        if (file.isFile) {
+            val name = file.name?.lowercase() ?: ""
+            val extension = name.substringAfterLast('.', "")
+            if (supportedExtensions.contains(extension)) {
+                images.add(file.uri)
             }
         }
     }
-
-    if (images.isEmpty() || !images.contains(selectedUri)) {
-        if (!images.contains(selectedUri)) {
-            images.add(0, selectedUri)
-        }
+    
+    // Sort alphabetically by name
+    return images.sortedBy { uri ->
+        DocumentFile.fromSingleUri(context, uri)?.name?.lowercase() ?: ""
     }
-
-    return images
 }
