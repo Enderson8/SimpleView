@@ -2,6 +2,7 @@ package com.example.simpleview.ui.theme
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.MediaStore
@@ -24,7 +25,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -77,6 +81,7 @@ fun SimpleViewScreen() {
     var currentIndex by remember { mutableIntStateOf(-1) }
     var isFullScreen by remember { mutableStateOf(false) }
     var showInfo by remember { mutableStateOf(false) }
+    var isCropping by remember { mutableStateOf(false) }
     
     val currentUri = if (currentIndex in allImages.indices) allImages[currentIndex] else null
 
@@ -101,6 +106,21 @@ fun SimpleViewScreen() {
             allImages = images
             currentIndex = images.indexOf(it)
         }
+    }
+
+    if (isCropping && currentUri != null) {
+        CropScreen(
+            uri = currentUri,
+            onCropConfirmed = { 
+                isCropping = false 
+                // Refresh images to see the new one if saved in the same folder
+                val images = fetchImagesInSameFolder(context, currentUri)
+                allImages = images
+                currentIndex = images.indexOf(currentUri)
+            },
+            onCancel = { isCropping = false }
+        )
+        return
     }
 
     Column(
@@ -167,6 +187,49 @@ fun SimpleViewScreen() {
                         Icon(
                             imageVector = Icons.Default.Info,
                             contentDescription = "Informações da imagem",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    IconButton(onClick = { isCropping = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Crop,
+                            contentDescription = "Cortar imagem",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    IconButton(onClick = {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "image/*"
+                            putExtra(Intent.EXTRA_STREAM, currentUri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, "Compartilhar Imagem"))
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Compartilhar",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    IconButton(onClick = {
+                        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(currentUri, "image/*")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(viewIntent, "Abrir com..."))
+                    }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = "Abrir com...",
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
