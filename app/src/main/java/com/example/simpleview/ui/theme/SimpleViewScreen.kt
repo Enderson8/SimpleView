@@ -8,6 +8,7 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.text.format.Formatter
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -109,6 +110,7 @@ fun SimpleViewScreen() {
     }
 
     if (isCropping && currentUri != null) {
+        BackHandler { isCropping = false }
         CropScreen(
             uri = currentUri,
             onCropConfirmed = { 
